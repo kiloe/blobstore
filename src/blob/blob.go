@@ -11,7 +11,7 @@ import (
 )
 
 // The directory where blobs are stored
-var StateDir = "/var/state/blobstore"
+var StateDir = "/var/state"
 
 type Blob struct {
 	ID          uuid.UUID         `json:"id"`             // Blob ID
