@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+	<body>
+		<input type="file" multiple onchange="send(this)" />
+		<progress id="progressBar" max="100" value="0"></progress>
+		<div id="out"></div>
+		<script>
+			function send(input) {
+				var data = new FormData();
+				if( input.files.length == 0 ){
+					alert("select a file first");
+				}
+				for(var i=0; i<input.files.length; i++){
+					var f = input.files[i];
+					data.append('file', f);
+				};
+
+				var xhr = new XMLHttpRequest();
+				xhr.upload.onprogress = function(e) {
+					var percentComplete = (e.loaded / e.total) * 100;
+					var progress = document.getElementById("progressBar");
+					progress.value = percentComplete;
+				};
+				xhr.onload = function() {
+					if (xhr.status == 200) {
+						var res = JSON.parse(xhr.responseText);
+						console.info(res);
+						var links = '';
+						for(var i=0; i<res.length; i++){
+							links += '<a href="/'+res[i].id+'">link</a><br/>';
+						}
+						console.log(links);
+						document.getElementById("out").innerHTML = links;
+					} else {
+						var msg = xhr.responseText;
+						console.error(msg);
+					}
+				};
+				xhr.onerror = function() {
+					alert("Error! Upload failed. Can not connect to server.");
+				};
+
+				xhr.open("POST", "/", true);
+				xhr.send(data);
+			}
+		</script>
+	</body>
+</html>
