@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -38,20 +37,28 @@ func BlobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func blobHandler(w http.ResponseWriter, r *http.Request) error {
+	// Enable CORS
+	h := w.Header()
+	if origin := h.Get("Origin"); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+	}
+	h.Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+	h.Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
+	// Router
 	switch r.Method {
-	case "GET":
-		return downloadHandler(w, r)
 	case "POST":
 		return uploadHandler(w, r)
+	case "OPTIONS":
+		return nil
 	default:
-		return errors.New("bad request")
+		return downloadHandler(w, r)
 	}
 }
 
 func downloadHandler(w http.ResponseWriter, r *http.Request) error {
 	match := blobPathMatcher.FindStringSubmatch(r.URL.Path)
 	if len(match) != 2 {
-		return errors.New("bad request")
+		return errors.New("bad request: " + r.URL.String())
 	}
 	id, err := uuid.ParseUUID(match[1])
 	if err != nil {
@@ -61,14 +68,15 @@ func downloadHandler(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	data, err := blob.NewReader()
+	f, err := blob.File()
 	if err != nil {
 		return err
 	}
-	defer data.Close()
-	if _, err := io.Copy(w, data); err != nil {
-		return err
+	defer f.Close()
+	if blob.ContentType != "" {
+		w.Header().Set("Content-Type", blob.ContentType)
 	}
+	http.ServeContent(w, r, blob.Name, blob.Time(), f)
 	return nil
 }
 
@@ -125,7 +133,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		blobs = append(blobs, b)
-		fmt.Println("created blob", b.ID)
+		fmt.Println("created blob", b.ID, "for", b.Name, b.ContentType)
 	}
 	// Check we actually uploaded something
 	if len(blobs) == 0 {
@@ -144,6 +152,7 @@ func ListenAndServe(addr string) error {
 	fmt.Println("starting blobstore service at", addr)
 	mux := http.NewServeMux()
 	mux.Handle("/test/", http.StripPrefix("/test/", http.FileServer(http.Dir("public"))))
+	mux.Handle("/favicon.ico", http.FileServer(http.Dir("public")))
 	mux.HandleFunc("/", BlobHandler)
 	return http.ListenAndServe(addr, mux)
 }

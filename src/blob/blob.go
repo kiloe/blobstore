@@ -3,6 +3,7 @@ package blob
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,7 +29,11 @@ func (b *Blob) Time() time.Time {
 }
 
 func (b *Blob) mkdir() error {
-	return os.MkdirAll(b.dir(), 0777)
+	dir, err := b.dir()
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(dir, 0777)
 }
 
 // Valid returns true if the blob has a valid ID.
@@ -36,18 +41,13 @@ func (b *Blob) Valid() bool {
 	return b.ID.Valid()
 }
 
-// dir returns the local filesystem path of to the blob dir
-// Blobs are stored in the state dir at /YYYY/MM/DD/UUID
-// The UUID is always a v1, so this path can be calculated
-// from the UUID alone.
-// Since calling this method implies something is about to
-// be read/written it will panic if used on an invalid blob.
-func (b *Blob) dir() string {
+// dir returns the pideon hole that the blob lives in /<StateDir>/YYYY/MM/DD/...
+func (b *Blob) dir() (string, error) {
 	if !b.Valid() {
-		panic("attempt to generate path for ")
+		return "", errors.New("attempt to generate path for ")
 	}
 	if StateDir == "" {
-		panic("invalid state dir")
+		return "", errors.New("invalid state dir")
 	}
 	time := b.ID.Time()
 	path := []string{
@@ -55,34 +55,57 @@ func (b *Blob) dir() string {
 		time.Format("2006"),
 		time.Format("01"),
 		time.Format("06"),
-		b.ID.String(),
 	}
-	return filepath.Join(path...)
+	return filepath.Join(path...), nil
 }
 
-// Dir is the non-panicy version of dir
-func (b *Blob) Dir() (string, error) {
-	if StateDir == "" {
-		return "", errors.New("invalid state dir")
+// path returns the path to the blob data
+func (b *Blob) path() (string, error) {
+	dir, err := b.dir()
+	if err != nil {
+		return "", err
 	}
+	return filepath.Join(dir, b.ID.String()), nil
+}
+
+// Exists returns true if the blob is valid and has a data file
+func (b *Blob) Exists() bool {
 	if !b.Valid() {
-		return "", errors.New("invalid blob")
+		return false
 	}
-	return b.dir(), nil
+	filename, err := b.Path()
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(filename); err == nil {
+		return true
+	}
+	return false
 }
 
-// Path returns the local filesystem path of the actual blob data
-func (b *Blob) Path() string {
-	return filepath.Join(b.dir(), "data")
+// path returns the local filesystem path of to the blob data
+// Blobs are stored in the state dir at /YYYY/MM/DD/UUID
+// The UUID is always a v1, so this path can be calculated
+// from the UUID alone.
+func (b *Blob) Path() (string, error) {
+	return b.path()
 }
 
 // metadataPath returns the local filesystem path of the metadata json
-func (b *Blob) metadataPath() string {
-	return filepath.Join(b.dir(), "meta.json")
+func (b *Blob) metadataPath() (string, error) {
+	path, err := b.path()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s.json", path), nil
 }
 
 func (b *Blob) unmarshal() error {
-	f, err := os.Open(b.metadataPath())
+	path, err := b.metadataPath()
+	if err != nil {
+		return err
+	}
+	f, err := os.Open(path)
 	if err != nil {
 		return err
 	}
@@ -99,7 +122,11 @@ func (b *Blob) marshal() error {
 	if err := b.mkdir(); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(b.metadataPath(), os.O_WRONLY|os.O_CREATE, 0666)
+	path, err := b.metadataPath()
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		return err
 	}
@@ -116,7 +143,11 @@ func (b *Blob) WriteFrom(src io.Reader) error {
 	if err := b.mkdir(); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(b.Path(), os.O_WRONLY|os.O_CREATE, 0666)
+	path, err := b.path()
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		return err
 	}
@@ -131,20 +162,31 @@ func (b *Blob) WriteFrom(src io.Reader) error {
 	return nil
 }
 
-func (b *Blob) NewReader() (io.ReadCloser, error) {
-	f, err := os.OpenFile(b.Path(), os.O_RDONLY, 0666)
+// File returns a new open read-only *os.File for the blob data.
+// Users must close the file.
+func (b *Blob) File() (*os.File, error) {
+	if !b.Exists() {
+		return nil, fmt.Errorf("blob does not have any data to read")
+	}
+	path, err := b.path()
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY, 0666)
 	if err != nil {
 		return nil, err
 	}
 	return f, nil
 }
 
+// New returns a *Blob with a new ID set
 func New() *Blob {
 	b := &Blob{}
 	b.ID = uuid.TimeUUID()
 	return b
 }
 
+// Get loads the meta data and returns the *Blob for a given UUID
 func Get(id uuid.UUID) (*Blob, error) {
 	b := &Blob{
 		ID: id,
