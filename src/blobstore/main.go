@@ -1,6 +1,7 @@
 package main
 
 import (
+	"blob"
 	"errors"
 	"fmt"
 	"os"
@@ -38,6 +39,7 @@ const (
 func Main() error {
 	switch kingpin.MustParse(cli.Parse(os.Args[1:])) {
 	case server.FullCommand():
+		blob.StateDir = *serverStateDir
 		return ListenAndServe(*serverAddr)
 	default:
 		return errors.New("not implemented")
